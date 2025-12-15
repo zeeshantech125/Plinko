@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from './services/supabaseClient';
+import { supabase, isConfigured } from './services/supabaseClient';
 import { AuthPage } from './pages/AuthPage';
 import { GamePage } from './pages/GamePage';
 import { WalletPage } from './pages/WalletPage';
@@ -7,6 +7,7 @@ import { HistoryPage } from './pages/HistoryPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { Navigation } from './components/Navigation';
 import { SchemaInstaller } from './components/SchemaInstaller';
+import { ConfigWizard } from './components/ConfigWizard';
 import { PageView, UserState } from './types';
 import { audioService } from './services/audioService';
 
@@ -17,17 +18,37 @@ const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<PageView>('GAME');
   const [balance, setBalance] = useState(0); 
   const [missingSchema, setMissingSchema] = useState(false);
+  const [connectionError, setConnectionError] = useState(false);
 
   // 1. Auth Listener
   useEffect(() => {
+    // Basic check for configuration existence
+    if (!isConfigured()) {
+       setConnectionError(true);
+       setLoading(false);
+       return;
+    }
+
     // Check active session on startup
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session) {
-        fetchProfile(session.user.id);
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (error) {
+         console.error("Session check failed", error);
+         // If session check fails completely (e.g. invalid URL), trigger config wizard
+         setConnectionError(true);
+         setLoading(false);
+         return;
+      }
+      
+      setSession(data.session);
+      if (data.session) {
+        fetchProfile(data.session.user.id);
       } else {
         setLoading(false);
       }
+    }).catch(err => {
+       console.error("Supabase connection error:", err);
+       setConnectionError(true);
+       setLoading(false);
     });
 
     // Listen for changes (Login/Logout)
@@ -56,10 +77,19 @@ const App: React.FC = () => {
       
       // Check for Transactions table existence first (lightweight check)
       const { error: txError } = await supabase.from('transactions').select('id').limit(1);
+      
+      // Handle "Table missing" specifically
       if (txError && (txError.code === 'PGRST205' || txError.message?.includes('does not exist') || txError.code === '42P01')) {
           setMissingSchema(true);
           setLoading(false);
           return;
+      }
+      
+      // Handle connection refusal (wrong keys)
+      if (txError && (txError.message?.includes('FetchError') || txError.message?.includes('Network request failed'))) {
+         setConnectionError(true);
+         setLoading(false);
+         return;
       }
 
       let { data, error } = await supabase
@@ -116,6 +146,8 @@ const App: React.FC = () => {
       }
     } catch (error) {
       console.error('Error fetching profile:', error);
+      // If critical network error
+      setConnectionError(true);
     } finally {
       setLoading(false);
     }
@@ -162,7 +194,12 @@ const App: React.FC = () => {
     }
   };
 
-  // Schema Recovery Modal
+  // 1. Connection Error / Not Configured -> Show Wizard
+  if (connectionError) {
+     return <ConfigWizard />;
+  }
+
+  // 2. Missing Schema -> Show Installer
   if (missingSchema) {
     return (
        <div className="min-h-screen bg-background relative">
