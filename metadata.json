@@ -1,0 +1,5 @@
+{
+  "name": "NeonPlinko Pro",
+  "description": "A professional, casino-grade Plinko betting game with mobile-first design, real-time physics, and provably fair logic.",
+  "requestFramePermissions": []
+}
